@@ -38,7 +38,7 @@ You MUST have answers to ALL of the following before proceeding. If any are miss
    - If not mentioned, skip — don't ask unprompted
 
 ### Optional (use sensible defaults if not provided):
-- **PR title** — defaults to `<TICKET-KEY> <ticket summary>`
+- **PR title** — defaults to `<type>(<TICKET-KEY>): <ticket summary>` following [Conventional Commits](https://www.conventionalcommits.org/). Type is one of: `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `perf` · `revert` · `ci`. Infer the type from the nature of the changes.
 - **Branch name** — defaults to `<TICKET-KEY>/<short-kebab-description>`
 - **Additional PR description context**
 - **Version bump type** — `patch` (default), `minor`, or `major` — only relevant if `package.json` exists
@@ -153,14 +153,15 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
 
 2. **Commit**: Stage all relevant changed files and commit:
    - Include `package.json`, `package-lock.json`, and the changelog file in the commit if they were modified in Step 5
-   - Commit message format:
+   - Commit message format follows [Conventional Commits](https://www.conventionalcommits.org/):
      ```
-     <TICKET-KEY> <Short description of what changed>
+     <type>(<TICKET-KEY>): <short description of what changed>
 
      <Optional longer explanation if the change is non-trivial>
 
      Co-Authored-By: Claude <noreply@anthropic.com>
      ```
+   - Type is one of: `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `perf` · `revert` · `ci`. Infer from the nature of the changes.
    - Use a HEREDOC for the commit message to preserve formatting
    - Only add files that are part of the logical change — don't blindly `git add -A`
 
@@ -170,7 +171,7 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
 
 1. Determine the Jira base URL from the site discovered in Step 2 (e.g., `https://<site>.atlassian.net`)
 2. Create the PR using `gh pr create` with:
-   - **Title**: `<TICKET-KEY> <Description>`
+   - **Title**: `<type>(<TICKET-KEY>): <description>`
    - **Base branch**: the repository's main/default branch (check with `git remote show origin` or convention)
    - **Body** in this format (use HEREDOC):
      ```markdown
