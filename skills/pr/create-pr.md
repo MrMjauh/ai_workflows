@@ -38,7 +38,7 @@ You MUST have answers to ALL of the following before proceeding. If any are miss
    - If not mentioned, skip — don't ask unprompted
 
 ### Optional (use sensible defaults if not provided):
-- **PR title** — defaults to `<type>(<TICKET-KEY>): <ticket summary>` following [Conventional Commits](https://www.conventionalcommits.org/). Type is one of: `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `perf` · `revert` · `ci`. Infer the type from the nature of the changes.
+- **PR title** — defaults to `<type>(<TICKET-KEY>): <short, outcome-focused description>` following [Conventional Commits](https://www.conventionalcommits.org/). Type is one of: `feat` · `fix` · `docs` · `refactor` · `test` · `chore` · `perf` · `revert` · `ci`. Infer the type from the nature of the changes. Phrase the description from the user's perspective (the *what changed for them*), not the implementation. ✅ `feat(PROJ-12): one-step onboarding` — ❌ `feat(PROJ-12): refactor signup controller`.
 - **Branch name** — defaults to `<TICKET-KEY>/<short-kebab-description>`
 - **Additional PR description context**
 - **Version bump type** — `patch` (default), `minor`, or `major` — only relevant if `package.json` exists
@@ -75,12 +75,12 @@ You MUST have answers to ALL of the following before proceeding. If any are miss
 ### If creating a sub-task under a parent:
 1. Fetch the parent ticket to get its project key and context
 2. Use `mcp__claude_ai_Atlassian__getJiraIssueTypeMetaWithFields` to find the sub-task issue type for the project
-3. Create the sub-task with `mcp__claude_ai_Atlassian__createJiraIssue` linked to the parent
+3. Create the sub-task with `mcp__claude_ai_Atlassian__createJiraIssue` linked to the parent. Phrase the summary as an end-user outcome, not an implementation task (✅ "Users can reset password from login screen" — ❌ "Add reset endpoint to AuthController").
 4. Note the new ticket key
 
 ### If creating a new ticket:
 1. Ask the user for: project key, summary, and description (if not already provided)
-2. Create the ticket with `mcp__claude_ai_Atlassian__createJiraIssue`
+2. Create the ticket with `mcp__claude_ai_Atlassian__createJiraIssue`. Same rule as sub-tasks — summary should describe the user-visible outcome or business value, not the technical work.
 3. Note the new ticket key
 
 ## Step 3: Assign and Transition the Ticket
@@ -133,7 +133,7 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
      ## [<new-version>] - <YYYY-MM-DD>
 
      ### <Category>
-     - <TICKET-KEY>: <Short description of what changed>
+     - <TICKET-KEY>: <Short, end-user-facing description of the benefit or outcome>
      ```
    - Categories to use (only include those that apply):
      - `Added` — new features or capabilities
@@ -141,7 +141,12 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
      - `Fixed` — bug fixes
      - `Removed` — removed features or code
    - Insert the new entry at the top of the changelog (after any header/preamble, before the previous release entry).
-   - Keep entries factual, concise, and user-facing. Describe *what changed* from an end-user or developer perspective, not implementation details.
+   - **Write entries for the end user — describe the business value or outcome, not the implementation.** Translate the technical change into the user-visible effect.
+     - ✅ Good: "Onboarding now finishes in one step instead of two."
+     - ✅ Good: "Bookings can no longer be double-booked across timezones."
+     - ❌ Bad: "Updated `createBooking()` to accept a `timezone` argument."
+     - ❌ Bad: "Refactored auth middleware to use new token service."
+   - If a change has no observable end-user effect (pure refactor, internal tooling), either omit it or describe it in plain terms (e.g., "Improved performance of search results").
 3. If no changelog file exists, skip this sub-step silently — do NOT create a new changelog file.
 
 ## Step 6: Create Branch, Commit, and Push
@@ -173,10 +178,10 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
 2. Create the PR using `gh pr create` with:
    - **Title**: `<type>(<TICKET-KEY>): <description>`
    - **Base branch**: the repository's main/default branch (check with `git remote show origin` or convention)
-   - **Body** in this format (use HEREDOC):
+   - **Body** in this format (use HEREDOC). Keep it short — the diff speaks for itself.
      ```markdown
      ## Summary
-     <1-3 bullet points describing what changed and why>
+     <1–2 short bullets, end-user/business-value framing. No implementation detail.>
 
      ## Version
      <If version was bumped: `v<old-version>` → `v<new-version>` (`<bump-type>`). If not bumped: omit this section entirely.>
@@ -185,10 +190,11 @@ Run independent API calls in parallel where possible (e.g., fetching user info a
      [<TICKET-KEY>](<jira-base-url>/browse/<TICKET-KEY>)
 
      ## Test plan
-     - [ ] <How to verify the change works>
+     - [ ] <One line: how to verify the change works>
 
      Generated with [Claude Code](https://claude.com/claude-code)
      ```
+   - **Summary rules**: no more than 2 bullets, one line each. Describe the outcome, not the code. Skip background, motivation paragraphs, and lists of touched files.
 
 3. Return the PR URL to the user.
 
