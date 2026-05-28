@@ -200,6 +200,96 @@ a hardcoded, reviewable expectation rather than a variable comparison.
 
 ---
 
+## Assertion strength
+
+Hardcoding a literal is half the rule. The other half is asserting *enough* of the
+observable state that a failure tells the reader exactly what drifted. Three weak
+patterns to delete on sight:
+
+❌ **Length-only checks.** `expect(rows).toHaveLength(3)` passes when the count is
+   right and the content is wrong, and tells a reviewer nothing about what those
+   three rows are supposed to be. Same problem with `expect(mock).toHaveBeenCalledTimes(3)`.
+
+❌ **Single-field counters.** `expect(result.summary.backfilled).toBe(3)` ticks one
+   number out of a richer summary object. The interesting questions — did `errors`
+   stay at 0? what was the per-row failure reason? what was the date range? — all go
+   unasked.
+
+❌ **Substring matches on structured output.** Three `.toContain(...)` calls on a
+   Slack/email/log message tell you each fragment exists somewhere in the string,
+   not whether the message is grouped, ordered, or formatted correctly. The reader
+   has to mentally reassemble the message instead of seeing it.
+
+✅ **Full-literal equality on the whole observable.** Assert the entire object, the
+   entire list (sorted for stability), or the entire message string. A failure diff
+   then points at the exact field that changed.
+
+```ts
+// ❌ three tests-in-one, none of them informative
+expect(result.summary.backfilled).toBe(3);
+expect(rows).toHaveLength(3);
+expect(message).toContain("Backfilled 3");
+expect(message).toContain("• userId 1: 1, 2");
+
+// ✅ one assertion per observable, full literal
+expect(result.summary).toEqual({
+  total: 3, backfilled: 3, alreadyExists: 0, errors: 0,
+  cannotBackfillReasons: {},
+  proposedDateRange: { earliest: "2026-04-01", latest: "2026-04-20" },
+  // ...
+});
+
+expect(rows).toEqual([
+  { uniqueIdentifier: "patientA-1", journaledAt: "2026-04-01T10:00:00.000Z" },
+  { uniqueIdentifier: "patientA-2", journaledAt: "2026-04-20T10:00:00.000Z" },
+  { uniqueIdentifier: "patientB-3", journaledAt: "2026-04-10T10:00:00.000Z" },
+]);
+
+expect(message).toBe(
+  `*Backfilled 3 iCBT Webdoc entries*\n` +
+  `• userId 1: 1, 2\n` +
+  `• userId 2: 3`,
+);
+```
+
+When the persisted shape is wide (20+ fields), extract a **projection helper** near
+the tests that filters and projects to the fields you actually care about, sorted
+by a stable key. Reuse it across every test that asks "what did the system
+write?" — drafts, journals, edge cases — so all those assertions read the same way
+and a future field addition is one edit, not twenty:
+
+```ts
+const summarizeAssignedIcbtRows = (items) =>
+  items
+    .filter((i) => String(i.typeId ?? "").startsWith("assigned_icbt#patient#"))
+    .map((i) => ({
+      uniqueIdentifier: i.uniqueIdentifier,
+      type: i.type,
+      journaledAt: i.journaledAt,
+      companyName: i.companyName,
+    }))
+    .sort((a, b) =>
+      String(a.uniqueIdentifier).localeCompare(String(b.uniqueIdentifier)),
+    );
+
+expect(summarizeAssignedIcbtRows(items)).toEqual([
+  {
+    uniqueIdentifier: "1-prog-1-15",
+    type: "assigned_icbt_b2b_sent_to_journal",
+    journaledAt: "2026-04-15T10:00:00.000Z",
+    companyName: "TestCorp",
+  },
+]);
+```
+
+Drop redundant mock-call-count assertions when downstream state already proves the
+path was hit. If the DynamoDB row exists, you don't also need `expect(client.put)
+.toHaveBeenCalledTimes(1)`. Keep `expect(mock).not.toHaveBeenCalled()` only when
+the *absence* of a call is the test's actual point (dry-run modes, skip branches,
+short-circuits).
+
+---
+
 ## Choosing unit vs integration
 
 | Situation | Approach |
@@ -337,10 +427,32 @@ const seedPatients = async (db: DbClient) =>
 
 Tests assert on exact timestamps, so the clock must be deterministic:
 
-- Freeze it: a fake-timers / clock-mock library (set in `beforeEach`, reset in
-  teardown), or inject a clock into the code under test.
+- Freeze it: a fake-timers / clock-mock library, or inject a clock into the code
+  under test.
 - Pin the timezone (e.g. `TZ=UTC` in the test command) — never assert a local time
   without knowing the timezone the suite runs under.
+
+**Where you set the clock matters as much as that you set it.** When the seeded
+dates are interpreted relative to "now" (anything that compares against `today`,
+windows like "14 days ago", "future"/"past" branches), pin the clock **inside the
+test body, right above the seeded data** — not hidden in `beforeEach`. The
+relationship between "today" and the seeded dates is load-bearing information; it
+belongs where a reader can see both in one screenful:
+
+```ts
+it("backfills only iCBTs that became active in the last 14 days", async () => {
+  mockdate.set("2026-05-27T12:00:00.000Z"); // ← "today" is right here
+  await seedCandidate({ becameActive: "2026-05-20T10:00:00Z" }); // 7 days ago
+  await seedCandidate({ becameActive: "2026-05-01T10:00:00Z" }); // out of window
+
+  const result = await backfillIcbts({ becameActiveAfter: "14_days_ago" });
+  expect(result.summary.backfilled).toBe(1);
+});
+```
+
+Put it in `beforeEach` only when every test in the file uses the same "now" and
+the assertions don't depend on it — or to install non-time-pinning machinery
+(e.g. a per-call clock bump so successive writes get unique primary keys).
 
 ```ts
 clock.set("2024-01-17T18:00:00Z");
@@ -375,7 +487,29 @@ supports.
   the project's existing convention.
 - One consistent suffix for tests; a distinct one (or a separate directory / config) for
   integration tests so they can be run and excluded separately.
-- Group with `describe` / blocks; name cases in plain English describing the behavior.
+- Group with `describe` / blocks.
+- Name each `it`/`test` case as a **plain-English behavior statement a non-engineer
+  could read** — not an implementation summary. Never put internal status codes,
+  field names, algorithm jargon, or words like "end-to-end" into the name. The name
+  should describe what the system does for the user, not what the test does to the
+  system.
+
+  ```
+  ❌ "journals past-dated iCBTs end-to-end and posts a per-user Slack summary"
+       (what's "past-dated"? what's "end-to-end"?)
+  ❌ "pushes the proposed date to the next ISO Monday when a resolved iCBT is in the same week"
+       (jargon — "ISO Monday", "resolved iCBT")
+  ❌ "skips deleted users with CANNOT_BACKFILL and does not publish"
+       (CANNOT_BACKFILL is an internal status code)
+  ❌ "uses journaledAt (not date) for assigned_icbt week-collision checks"
+       (refers to internal field names)
+
+  ✅ "backfills missing iCBTs and posts a Slack summary listing each patient's iCBT IDs"
+  ✅ "moves the journaling date to the next week when the patient already has an iCBT that week"
+  ✅ "does not journal iCBTs for patients whose account has been deleted"
+  ✅ "compares against an iCBT's Webdoc booking date, not its reception date, when avoiding same-week collisions"
+  ```
+
 - Use table / parameterized tests (`it.each`, table-driven) for many near-identical
   cases instead of copy-pasting.
 
@@ -387,19 +521,35 @@ supports.
 2. DB / cloud touched → real container or emulator, **not** a mock?
 3. Every assertion compares against a **hardcoded literal** (or a snapshot), never a
    variable?
-4. Seed ids and values are deterministic and hardcoded?
-5. State reset in `beforeEach`; containers / connections torn down in `afterAll`?
-6. Clock and timezone pinned if any assertion involves dates / times?
-7. The real public entry point is exercised, not a private helper?
-8. The full test command passes locally (including any separate integration command)?
+4. Assertions are **full-object / full-list / full-string literals** — never
+   length-only (`.toHaveLength`), single-field counters (`.toBe(3)` on one summary
+   key), or substring matches (`.toContain`) on structured output?
+5. Seed ids and values are deterministic and hardcoded?
+6. State reset in `beforeEach`; containers / connections torn down in `afterAll`?
+7. Clock and timezone pinned, and the clock-pin lives **inside the test** when
+   "now" is load-bearing for the assertion?
+8. Test names read as plain-English behavior — no internal status codes, field
+   names, or jargon?
+9. The real public entry point is exercised, not a private helper?
+10. The full test command passes locally (including any separate integration command)?
 
 ## Common mistakes (don't)
 
 - Mocking the database / SDK instead of starting a container or emulator.
 - `expect(res.userId).toBe(seeded.userId)` — re-deriving the expectation from setup.
 - Asserting `toHaveBeenCalledWith(...)` instead of checking the real resulting state.
+- `expect(rows).toHaveLength(3)` / `expect(result.summary.backfilled).toBe(3)` —
+  count-only checks that pass when the content is wrong. Assert the full literal.
+- `expect(message).toContain("…")` on structured output (Slack/email/log). Assert
+  the full message string with `.toBe(...)`.
+- Asserting `expect(mock).toHaveBeenCalledTimes(N)` *and* the resulting DB state —
+  the DB state already proves it. Drop the count, keep the state.
 - A bespoke per-file harness when a shared one exists (or should).
-- Leaving the clock / timezone unpinned and asserting on a timestamp.
+- Leaving the clock / timezone unpinned and asserting on a timestamp; or burying
+  the clock-pin in `beforeEach` when each test cares about a different "now".
+- Naming tests with internal status codes ("returns CANNOT_BACKFILL"), field
+  names ("uses journaledAt"), or jargon ("end-to-end"). The name should describe
+  user-visible behavior.
 - Cleaning up only in `afterEach` (a thrown test skips it) instead of resetting on
   entry.
 - Testing a private helper because it's easier than exercising the real entry point.
